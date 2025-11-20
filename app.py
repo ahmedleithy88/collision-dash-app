@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 from dash import Dash, dcc, html, Input, Output, State
 import plotly.express as px
@@ -5,25 +6,26 @@ import plotly.express as px
 # ======================
 # Load data
 # ======================
-df = pd.read_csv(
-    "cleaned_collisions_persons.csv",
-    parse_dates=["CRASH_DATETIME"]
-)
+df = pd.read_csv("cleaned_collisions_persons.csv", parse_dates=["CRASH_DATETIME"])
 
-# ========= Extra derived columns =========
-
-# Clean / normalize vehicle types into categories
+# ======================
+# Vehicle category cleaner
+# ======================
 def normalize_vehicle(v):
     if pd.isna(v):
         return "UNKNOWN"
     s = str(v).upper()
+
+    # Ambulance variants
+    if "AMB" in s or "AMBUL" in s:
+        return "AMBULANCE"
 
     if "TAXI" in s:
         return "TAXI"
     if "BUS" in s:
         return "BUS"
     if "MOTORCYCLE" in s or "SCOOTER" in s or "MOTORBIKE" in s:
-        return "MOTORCYCLE"
+        return "MOTORcycle"
     if "BICYCLE" in s or "BIKE" in s:
         return "BICYCLE"
     if "SUV" in s or "STATION WAGON" in s:
@@ -32,35 +34,22 @@ def normalize_vehicle(v):
         return "TRUCK/VAN"
     if "TRUCK" in s or "VAN" in s:
         return "TRUCK/VAN"
-    if "SEDAN" in s or "4 DOOR" in s or "4-DOOR" in s or "2 DOOR" in s or "2-DOOR" in s:
+    if (
+        "SEDAN" in s
+        or "4 DOOR" in s
+        or "4-DOOR" in s
+        or "2 DOOR" in s
+        or "2-DOOR" in s
+    ):
         return "CAR"
+
     return "OTHER"
 
-# If YEAR column isn't already there (safety)
-if "YEAR" not in df.columns:
-    df["YEAR"] = df["CRASH_DATETIME"].dt.year
-
-# If INJURY_TYPE column isn't already there (safety)
-if "INJURY_TYPE" not in df.columns:
-    def get_injury_type(person_type):
-        if pd.isna(person_type):
-            return "UNKNOWN"
-        s = str(person_type).upper()
-        if "PEDESTRIAN" in s:
-            return "PEDESTRIAN"
-        if "CYCLIST" in s or "BICYCLIST" in s:
-            return "CYCLIST"
-        return "MOTORIST"
-    df["INJURY_TYPE"] = df["PERSON_TYPE"].apply(get_injury_type)
-
+# Apply cleaning
 df["VEHICLE_CATEGORY"] = df["VEHICLE TYPE CODE 1"].apply(normalize_vehicle)
 
-# Drop rows with no coordinates for the map (we'll reuse this after filtering)
-# (We’ll still re-dropna after filtering, this is just a base)
-df_map_base = df.dropna(subset=["LATITUDE", "LONGITUDE"])
-
 # ======================
-# Options for dropdowns
+# Dropdown options
 # ======================
 borough_options = [
     {"label": b.title(), "value": b}
@@ -88,16 +77,16 @@ injury_type_options = [
 ]
 
 # ======================
-# Build app
+# Build Dash app
 # ======================
 app = Dash(__name__)
 
 app.layout = html.Div(
     style={"fontFamily": "Arial", "padding": "20px"},
     children=[
-        html.H1("NYC Motor Vehicle Collisions – Interactive Report"),
+        html.H1("NYC Motor Vehicle Collisions – Interactive Dashboard"),
 
-        # ---- FILTERS ROW ----
+        # Filters row
         html.Div(
             style={"display": "flex", "gap": "10px", "flexWrap": "wrap"},
             children=[
@@ -118,32 +107,32 @@ app.layout = html.Div(
                 dcc.Dropdown(
                     id="filter-vehicle",
                     options=vehicle_options,
-                    placeholder="Vehicle Category",
+                    placeholder="Vehicle Type",
                     multi=True,
-                    style={"width": "220px"},
+                    style={"width": "200px"},
                 ),
                 dcc.Dropdown(
                     id="filter-factor",
                     options=factor_options,
                     placeholder="Contributing Factor",
                     multi=True,
-                    style={"width": "280px"},
+                    style={"width": "250px"},
                 ),
                 dcc.Dropdown(
                     id="filter-injury",
                     options=injury_type_options,
-                    placeholder="Injury Type (Pedestrian/Cyclist/Motorist)",
+                    placeholder="Injury Type",
                     multi=True,
-                    style={"width": "280px"},
+                    style={"width": "220px"},
                 ),
             ],
         ),
 
         html.Br(),
 
-        # ---- SEARCH + BUTTON ----
+        # Search + Button
         html.Div(
-            style={"display": "flex", "gap": "10px", "alignItems": "center"},
+            style={"display": "flex", "gap": "10px"},
             children=[
                 dcc.Input(
                     id="search-box",
@@ -160,49 +149,30 @@ app.layout = html.Div(
             ],
         ),
 
-        # message area (no data / how many rows)
-        html.Div(
-            id="no-data-message",
-            style={"color": "red", "fontWeight": "bold", "marginTop": "10px"},
-        ),
-
         html.Br(),
 
-        # ---- GRAPHS ----
-        html.Div(
-            children=[
-                dcc.Graph(id="graph-bar-borough"),
-                dcc.Graph(id="graph-line-time"),
-                dcc.Graph(id="graph-map"),
-            ]
-        ),
+        # Graphs
+        dcc.Graph(id="graph-bar-borough"),
+        dcc.Graph(id="graph-line-time"),
+        dcc.Graph(id="graph-map"),
     ],
 )
 
 # ======================
-# Helper: apply search text
+# Search-text logic
 # ======================
 BOROUGHS = ["BRONX", "BROOKLYN", "MANHATTAN", "QUEENS", "STATEN ISLAND"]
 
 def apply_search_text(df_in, text):
-    """
-    Reads free text like:
-    'Brooklyn 2022 pedestrian crashes'
-    and applies borough, year, and injury type filters.
-    """
     if not text:
-        return df_in, None, None, None  # no extra filters
+        return df_in, None, None, None
 
     text_u = text.upper()
 
-    # Borough from text
-    borough_from_text = None
-    for b in BOROUGHS:
-        if b in text_u:
-            borough_from_text = b
-            break
+    # Find borough
+    borough_from_text = next((b for b in BOROUGHS if b in text_u), None)
 
-    # Year from text (first 4-digit number that looks like a year)
+    # Year extraction
     year_from_text = None
     for token in text_u.split():
         if token.isdigit() and len(token) == 4:
@@ -211,7 +181,7 @@ def apply_search_text(df_in, text):
                 year_from_text = y
                 break
 
-    # Injury type from text
+    # Injury type
     injury_from_text = None
     if "PEDESTRIAN" in text_u:
         injury_from_text = "PEDESTRIAN"
@@ -238,7 +208,6 @@ def apply_search_text(df_in, text):
         Output("graph-bar-borough", "figure"),
         Output("graph-line-time", "figure"),
         Output("graph-map", "figure"),
-        Output("no-data-message", "children"),
     ],
     Input("btn-generate", "n_clicks"),
     [
@@ -250,13 +219,10 @@ def apply_search_text(df_in, text):
         State("search-box", "value"),
     ],
 )
-def update_report(n_clicks,
-                  boroughs, years, vehicles, factors, injuries, search_text):
-
-    # base df
+def update_report(n_clicks, boroughs, years, vehicles, factors, injuries, search_text):
     dff = df.copy()
 
-    # --- apply dropdown filters ---
+    # Dropdown filters
     if boroughs:
         dff = dff[dff["BOROUGH"].isin(boroughs)]
     if years:
@@ -268,17 +234,303 @@ def update_report(n_clicks,
     if injuries:
         dff = dff[dff["INJURY_TYPE"].isin(injuries)]
 
-    # --- apply search text (extra filters) ---
+    # Apply search
     dff, _, _, _ = apply_search_text(dff, search_text)
 
-    # If no data after filters → empty figs + message
+    # Handle empty result
     if dff.empty:
-        empty_fig = px.scatter()
-        empty_fig.update_layout(title="No data")
-        msg = "No data for selected filters. Try removing some filters or changing your search."
-        return empty_fig, empty_fig, empty_fig, msg
+        empty_fig = px.scatter(title="No data found.")
+        return empty_fig, empty_fig, empty_fig
 
-    # ========== BAR: crashes per borough ==========
+    # Bar chart
+    bar_df = (
+        dff.groupby("BOROUGH").size().reset_index(name="crash_count")
+    )
+    fig_bar = px.bar(
+        bar_df,
+        x="BOROUGH",
+        y="crash_count",
+        title="Crashes by Borough",
+    )
+
+    # Line chart
+    time_df = (
+        dff.groupby("YEAR").size().reset_index(name="crash_count")
+    )
+    fig_line = px.line(
+        time_df,
+        x="YEAR",
+        y="crash_count",
+        markers=True,
+        title="Crashes Over Time",
+    )
+
+    # Map
+    map_df = dff.dropna(subset=["LATITUDE", "LONGITUDE"])
+    fig_map = px.scatter_mapbox(
+        map_df.sample(min(5000, len(map_df))),
+        lat="LATITUDE",
+        lon="LONGITUDE",
+        color="INJURY_TYPE",
+        zoom=9,
+        height=500,
+        title="Crash Locations (sample)",
+    )
+    fig_map.update_layout(mapbox_style="open-street-map")
+
+    return fig_bar, fig_line, fig_map
+
+# ======================
+# Render / Deployment config
+# ======================
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8050))
+    app.run(debug=False, host="0.0.0.0", port=port)
+
+    import os
+import pandas as pd
+from dash import Dash, dcc, html, Input, Output, State
+import plotly.express as px
+
+# ======================
+# Load data
+# ======================
+df = pd.read_csv("cleaned_collisions_persons.csv", parse_dates=["CRASH_DATETIME"])
+
+# If YEAR column is not already in the CSV, uncomment this:
+# df["YEAR"] = df["CRASH_DATETIME"].dt.year
+
+# ======================
+# Vehicle category cleaner
+# ======================
+def normalize_vehicle(v):
+    if pd.isna(v):
+        return "UNKNOWN"
+    s = str(v).upper()
+
+    # Ambulance variants
+    if "AMB" in s or "AMBUL" in s:
+        return "AMBULANCE"
+
+    if "TAXI" in s:
+        return "TAXI"
+    if "BUS" in s:
+        return "BUS"
+    if "MOTORCYCLE" in s or "SCOOTER" in s or "MOTORBIKE" in s:
+        return "MOTORCYCLE"
+    if "BICYCLE" in s or "BIKE" in s:
+        return "BICYCLE"
+    if "SUV" in s or "STATION WAGON" in s:
+        return "SUV"
+    if "PICK" in s or "PICK-UP" in s or "PICKUP" in s:
+        return "TRUCK/VAN"
+    if "TRUCK" in s or "VAN" in s:
+        return "TRUCK/VAN"
+    if (
+        "SEDAN" in s
+        or "4 DOOR" in s
+        or "4-DOOR" in s
+        or "2 DOOR" in s
+        or "2-DOOR" in s
+    ):
+        return "CAR"
+
+    return "OTHER"
+
+df["VEHICLE_CATEGORY"] = df["VEHICLE TYPE CODE 1"].apply(normalize_vehicle)
+
+# ======================
+# Dropdown options
+# ======================
+borough_options = [
+    {"label": b.title(), "value": b}
+    for b in sorted(df["BOROUGH"].dropna().unique())
+]
+
+year_options = [
+    {"label": str(int(y)), "value": int(y)}
+    for y in sorted(df["YEAR"].dropna().unique())
+]
+
+vehicle_options = [
+    {"label": v, "value": v}
+    for v in sorted(df["VEHICLE_CATEGORY"].dropna().unique())
+]
+
+factor_options = [
+    {"label": f.title(), "value": f}
+    for f in sorted(df["CONTRIBUTING FACTOR VEHICLE 1"].dropna().unique())
+]
+
+injury_type_options = [
+    {"label": i.title(), "value": i}
+    for i in sorted(df["INJURY_TYPE"].dropna().unique())
+]
+
+# ======================
+# Build Dash app
+# ======================
+app = Dash(__name__)
+
+app.layout = html.Div(
+    style={"fontFamily": "Arial", "padding": "20px"},
+    children=[
+        html.H1("NYC Motor Vehicle Collisions – Interactive Dashboard"),
+
+        # Filters row
+        html.Div(
+            style={"display": "flex", "gap": "10px", "flexWrap": "wrap"},
+            children=[
+                dcc.Dropdown(
+                    id="filter-borough",
+                    options=borough_options,
+                    placeholder="Select Borough",
+                    multi=True,
+                    style={"width": "200px"},
+                ),
+                dcc.Dropdown(
+                    id="filter-year",
+                    options=year_options,
+                    placeholder="Select Year",
+                    multi=True,
+                    style={"width": "150px"},
+                ),
+                dcc.Dropdown(
+                    id="filter-vehicle",
+                    options=vehicle_options,
+                    placeholder="Vehicle Type",
+                    multi=True,
+                    style={"width": "200px"},
+                ),
+                dcc.Dropdown(
+                    id="filter-factor",
+                    options=factor_options,
+                    placeholder="Contributing Factor",
+                    multi=True,
+                    style={"width": "250px"},
+                ),
+                dcc.Dropdown(
+                    id="filter-injury",
+                    options=injury_type_options,
+                    placeholder="Injury Type",
+                    multi=True,
+                    style={"width": "220px"},
+                ),
+            ],
+        ),
+
+        html.Br(),
+
+        # Search + Button
+        html.Div(
+            style={"display": "flex", "gap": "10px"},
+            children=[
+                dcc.Input(
+                    id="search-box",
+                    type="text",
+                    placeholder="Search (e.g. 'Brooklyn 2022 pedestrian crashes')",
+                    style={"width": "400px"},
+                ),
+                html.Button(
+                    "Generate Report",
+                    id="btn-generate",
+                    n_clicks=0,
+                    style={"padding": "10px 20px", "fontWeight": "bold"},
+                ),
+            ],
+        ),
+
+        html.Br(),
+
+        # Graphs (all interactive)
+        dcc.Graph(id="graph-bar-borough"),
+        dcc.Graph(id="graph-line-time"),
+        dcc.Graph(id="graph-map"),   # heatmap-style map
+    ],
+)
+
+# ======================
+# Search-text logic
+# ======================
+BOROUGHS = ["BRONX", "BROOKLYN", "MANHATTAN", "QUEENS", "STATEN ISLAND"]
+
+def apply_search_text(df_in, text):
+    if not text:
+        return df_in, None, None, None
+
+    text_u = text.upper()
+
+    borough_from_text = next((b for b in BOROUGHS if b in text_u), None)
+
+    year_from_text = None
+    for token in text_u.split():
+        if token.isdigit() and len(token) == 4:
+            y = int(token)
+            if 2012 <= y <= 2030:
+                year_from_text = y
+                break
+
+    injury_from_text = None
+    if "PEDESTRIAN" in text_u:
+        injury_from_text = "PEDESTRIAN"
+    elif "CYCLIST" in text_u or "BICYCLE" in text_u:
+        injury_from_text = "CYCLIST"
+    elif "MOTORIST" in text_u or "DRIVER" in text_u:
+        injury_from_text = "MOTORIST"
+
+    df_out = df_in.copy()
+    if borough_from_text:
+        df_out = df_out[df_out["BOROUGH"] == borough_from_text]
+    if year_from_text:
+        df_out = df_out[df_out["YEAR"] == year_from_text]
+    if injury_from_text:
+        df_out = df_out[df_out["INJURY_TYPE"] == injury_from_text]
+
+    return df_out, borough_from_text, year_from_text, injury_from_text
+
+# ======================
+# Main callback
+# ======================
+@app.callback(
+    [
+        Output("graph-bar-borough", "figure"),
+        Output("graph-line-time", "figure"),
+        Output("graph-map", "figure"),
+    ],
+    Input("btn-generate", "n_clicks"),
+    [
+        State("filter-borough", "value"),
+        State("filter-year", "value"),
+        State("filter-vehicle", "value"),
+        State("filter-factor", "value"),
+        State("filter-injury", "value"),
+        State("search-box", "value"),
+    ],
+)
+def update_report(n_clicks, boroughs, years, vehicles, factors, injuries, search_text):
+    dff = df.copy()
+
+    # Dropdown filters
+    if boroughs:
+        dff = dff[dff["BOROUGH"].isin(boroughs)]
+    if years:
+        dff = dff[dff["YEAR"].isin(years)]
+    if vehicles:
+        dff = dff[dff["VEHICLE_CATEGORY"].isin(vehicles)]
+    if factors:
+        dff = dff[dff["CONTRIBUTING FACTOR VEHICLE 1"].isin(factors)]
+    if injuries:
+        dff = dff[dff["INJURY_TYPE"].isin(injuries)]
+
+    # Apply search text
+    dff, _, _, _ = apply_search_text(dff, search_text)
+
+    # Handle empty result
+    if dff.empty:
+        empty_fig = px.scatter(title="No data found for selected filters.")
+        return empty_fig, empty_fig, empty_fig
+
+    # ----- BAR: crashes by borough -----
     bar_df = (
         dff.groupby("BOROUGH")
         .size()
@@ -289,10 +541,10 @@ def update_report(n_clicks,
         bar_df,
         x="BOROUGH",
         y="crash_count",
-        title="Number of Crashes by Borough",
+        title="Crashes by Borough",
     )
 
-    # ========== LINE: crashes over time (by year) ==========
+    # ----- LINE: crashes over time -----
     time_df = (
         dff.groupby("YEAR")
         .size()
@@ -307,33 +559,34 @@ def update_report(n_clicks,
         title="Crashes Over Time",
     )
 
-    # ========== MAP: crash locations ==========
+    # ----- HEATMAP MAP: density of crashes -----
     map_df = dff.dropna(subset=["LATITUDE", "LONGITUDE"])
-    # to avoid overloading, sample max 5000 points
-    if len(map_df) > 5000:
-        map_df = map_df.sample(5000, random_state=42)
+    if map_df.empty:
+        fig_map = px.scatter(title="No location data available.")
+    else:
+        map_sample = map_df.sample(min(8000, len(map_df)), random_state=0)
+        fig_map = px.density_mapbox(
+            map_sample,
+            lat="LATITUDE",
+            lon="LONGITUDE",
+            radius=12,  # controls blur / heat radius
+            center={"lat": 40.7128, "lon": -74.0060},
+            zoom=9,
+            height=500,
+            hover_data={
+                "BOROUGH": True,
+                "CRASH_DATETIME": True,
+                "INJURY_TYPE": True,
+            },
+            title="Crash Density Heatmap (sample)",
+        )
+        fig_map.update_layout(mapbox_style="open-street-map")
 
-    fig_map = px.scatter_mapbox(
-        map_df,
-        lat="LATITUDE",
-        lon="LONGITUDE",
-        color="INJURY_TYPE",
-        zoom=9,
-        height=500,
-        hover_data=["CRASH DATE", "BOROUGH", "PERSON_INJURY"],
-        title="Crash Locations (sample)",
-    )
-    fig_map.update_layout(mapbox_style="open-street-map")
-
-    msg = f"Showing {len(dff)} matching records."
-    return fig_bar, fig_line, fig_map, msg
-
+    return fig_bar, fig_line, fig_map
 
 # ======================
-# Run server
+# Render / Deployment config
 # ======================
-import os
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8050))
     app.run(debug=False, host="0.0.0.0", port=port)
