@@ -1,4 +1,5 @@
 https://web-production-c3bc7.up.railway.app/
+
 Abdelrahman Waleed
 	•	Helped explore the dataset (EDA).
 	•	Worked on cleaning the data before merging (handling missing values, fixing formats, removing duplicates).
@@ -8,3 +9,12 @@ Ahmed Tarek
 	•	Helped with the EDA and understanding the dataset.
 	•	Worked on pre-integration cleaning (fixing categories, checking borough/ZIP data).
 	•	Helped with post-integration cleaning (fixing new missing values, correcting data types).
+
+Omar Samer
+	•	Responsible for deploying the website online.
+
+Omar Emam
+	•	Helped develop the website code using Cursor (Dash app, layouts, filters, and graphs).
+
+Mohammed Emam
+	•	Worked with Omar Emam on building the website code in Cursor and improving the structure.
