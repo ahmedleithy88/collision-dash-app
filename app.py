@@ -7,6 +7,11 @@ import plotly.express as px
 # Load data
 # ======================
 df = pd.read_csv("cleaned_collisions_persons.csv", parse_dates=["CRASH_DATETIME"])
+# ======================
+# Build Dash app
+# ======================
+app = Dash(__name__)
+server = app.server  # ← CRITICAL LINE FOR RAILWAY DEPLOYMENT
 
 # ======================
 # Vehicle category cleaner
@@ -75,11 +80,7 @@ injury_type_options = [
     for i in sorted(df["INJURY_TYPE"].dropna().unique())
 ]
 
-# ======================
-# Build Dash app
-# ======================
-app = Dash(__name__)
-server = app.server  # ← CRITICAL LINE FOR RAILWAY DEPLOYMENT
+
 
 app.layout = html.Div(
     style={"fontFamily": "Arial", "padding": "20px"},
